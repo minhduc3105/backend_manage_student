@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database/credentials
+*.db
+*.sqlite3
+*.log
+*.bak
+*.pem
+*.key
+.env
+config.ini
+*.properties
+credentials.env
