@@ -32,11 +32,12 @@ jobs:
 
       - name: Run tests
         env:
+          PYTHONPATH: .
           DB_HOST: localhost
           DB_PORT: 5432
           DB_NAME: test_db
           DB_USER: test_user
           DB_PASSWORD: test_password
-          PYTHONPATH: .
+          SECRET_KEY: test_secret_key
         run: |
           pytest
