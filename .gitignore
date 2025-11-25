@@ -13,6 +13,8 @@ venv/
 .DS_Store
 Thumbs.db
 
+.venv
+
 # Database/credentials
 *.db
 *.sqlite3
