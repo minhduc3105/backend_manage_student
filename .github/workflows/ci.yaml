@@ -33,11 +33,11 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: .
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_NAME: test_db
-          DB_USER: test_user
-          DB_PASSWORD: test_password
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
           SECRET_KEY: test_secret_key
         run: |
           pytest
