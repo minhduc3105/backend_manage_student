@@ -5,7 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 # --- QUAN TRỌNG: Import app và get_db để tránh lỗi undefined name ---
 # Import 'get_db' và 'Base' từ file database.py
-from database import get_db, Base 
+from app.database import get_db, Base
 # Import 'app' từ file main.py
 from main import app
 
