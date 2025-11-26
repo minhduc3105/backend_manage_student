@@ -27,7 +27,9 @@ jobs:
 
       - name: Run linting
         run: |
+          # Dừng build nếu có lỗi cú pháp Python hoặc biến chưa định nghĩa
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Cảnh báo style code nhưng không dừng build (exit-zero)
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
       - name: Run tests
@@ -51,22 +53,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up AWS credentails
-        uses: aws-actions/configure-aws-credentails@v2
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REGISTRY_URI: ${{ secrets.ECR_REGISTRY_URI }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
           IMAGE_TAG: ${{ github.sha }}
-
         run: |
-          docker build -t ${{ secrets.ECR_REGISTRY_URI }}:${{ github.sha }} .
-          docker push ${{ secrets.ECR_REGISTRY_URI }}:${{ github.sha }}
+          # Build image
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+
+          # Push image lên ECR
+          docker push $ECR_REPOSITORY:$IMAGE_TAG
