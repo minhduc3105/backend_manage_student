@@ -1,45 +1,44 @@
-﻿# backend/app/database.py (replace contents)
+﻿from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from dotenv import load_dotenv
-import os
-from pathlib import Path
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-# Try to find the credentials.env relative to project root
-project_root = Path(__file__).resolve().parents[1]  # backend/app/.. -> backend
-env_path = project_root / "credentials.env"
-# Fallback to default search if not found
-if env_path.exists():
-    load_dotenv(dotenv_path=str(env_path))
-else:
-    load_dotenv()  # load from any default .env in env
+# 1. Import đúng nguồn: Lấy get_db và Base từ database.py
+from database import get_db, Base 
+from main import app
 
-DB_USER = os.getenv("POSTGRES_USER")
-DB_PASS = os.getenv("POSTGRES_PASSWORD")
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_NAME = os.getenv("POSTGRES_DB")
+# 2. Cấu hình SQLite In-Memory (DB ảo)
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 
-if not all([DB_USER, DB_PASS, DB_HOST, DB_PORT, DB_NAME]):
-    raise RuntimeError("Database environment variables are not set. Check credentials.env or environment.")
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 
-# Use psycopg2 driver explicitly to avoid async driver in sync code
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Tạo bảng trong DB ảo dựa trên Base lấy từ database.py
+Base.metadata.create_all(bind=engine)
 
-print(f"DATABASE_URL: {DATABASE_URL}")  # Debugging line, remove in production")
-
-
-
-# Create sync engine
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
+# 3. Hàm Override (Hàm thay thế)
+def override_get_db():
     try:
+        db = TestingSessionLocal()
         yield db
     finally:
         db.close()
+
+# 4. Áp dụng Override
+# QUAN TRỌNG: Key trong dictionary này phải là hàm get_db được import từ database.py
+app.dependency_overrides[get_db] = override_get_db
+
+# Khởi tạo Client
+client = TestClient(app)
+
+# 5. Test Case
+def test_read_main():
+    response = client.get("/")
+    assert response.status_code == 200
+    # Đảm bảo message khớp với code trong main.py của bạn
+    assert response.json() == {"message": "Welcome to the Student Management API! Visit /docs for API documentation."}

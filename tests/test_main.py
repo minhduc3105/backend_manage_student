@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from main import app, get_db
 from database import Base
 
 # 1. Cấu hình SQLite In-Memory
