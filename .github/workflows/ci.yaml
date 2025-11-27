@@ -44,69 +44,59 @@ jobs:
         run: |
           pytest
 
-  build-and-push:
+  deploy-to-ec2:
     needs: linting-and-test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - name: Deploy EC2 via SSH
+      - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          SSH_HOST: ${{ secrets.EC2_HOST }}
-          SSH_USERNAME: ${{ secrets.EC2_USER }}
-
-          IMAGE_TAG: ${{ github.sha }}
-          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-
-          ECR_REGISTRY: ${{ secrets.AWS_ACCESS_KEY_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
-
         with:
-          host: ${{ env.SSH_HOST }}
-          username: ${{ env.SSH_USERNAME }}
-          key: ${{ env.SSH_PRIVATE_KEY }}
-          envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD, AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            export AWS_ACCESS_KEY_ID=${{ env.AWS_ACCESS_KEY_ID }}
-            export AWS_SECRET_ACCESS_KEY=${{ env.AWS_SECRET_ACCESS_KEY }}
-            export AWS_DEFAULT_REGION=${{ env.AWS_REGION }}
+            # --- 1. CHUẨN BỊ THÔNG TIN ---
+            ECR_URI="${{ secrets.ECR_REPOSITORY_URI }}"
+            IMAGE_TAG= "${{ github.sha }}"
+            FULL_IMAGE="$ECR_URI:$IMAGE_TAG"
+            REGISTRY_DOMAIN=$(echo "$ECR_URI" | cut -d'/' -f1)
 
-            REGISTRY_DOMAIN=$(echo $ECR_REPOSITORY | cut -d'/' -f1)
+            echo "Start deploying image: $FULL_IMAGE"
 
-            echo "Registry Domain: $REGISTRY_DOMAIN"
-            echo "Full Image URI: $ECR_REPOSITORY:$IMAGE_TAG"
+            # --- 2. TẠO FILE .ENV TẠM THỜI ---
+            # Cách này an toàn hơn việc truyền biến trực tiếp vào lệnh docker run
+            # Tránh lỗi cú pháp do ký tự đặc biệt
 
+            cat <<EOF > .env.prod
+            POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}
+            POSTGRES_PORT=5432
+            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            SECRET_KEY=${{ secrets.SECRET_KEY }}
+            EOF
 
-            echo "Logging in..."
-            aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" | docker login --username AWS --password-stdin "$REGISTRY_DOMAIN"
+            # --- 3. ĐĂNG NHẬP & KÉO IMAGE ---
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin "$REGISTRY_DOMAIN"
+            docker pull "$FULL_IMAGE"
 
-            echo "Pulling image: $ECR_REPOSITORY:$IMAGE_TAG"
-            docker pull $ECR_REPOSITORY:$IMAGE_TAG
-
-            echo "Stopping old container..."
+            # --- 4. TÁI KHỞI ĐỘNG CONTAINER ---
             docker stop backend || true
             docker rm backend || true
 
-            echo "Starting new container..."
+            # Chạy container và đọc biến từ file .env.prod
             docker run -d \
               --name backend \
               --restart always \
               -p 80:8000 \
-              -e POSTGRES_HOST=$POSTGRES_HOST \
-              -e POSTGRES_PORT=$POSTGRES_PORT \
-              -e POSTGRES_DB=$POSTGRES_DB \
-              -e POSTGRES_USER=$POSTGRES_USER \
-              -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-              -e SECRET_KEY=$SECRET_KEY \
-              $ECR_REPOSITORY:$IMAGE_TAG
+              --env-file .env.prod \
+              "$FULL_IMAGE"
+
+            # --- 5. DỌN DẸP ---
+            # Xóa file .env sau khi dùng xong để bảo mật (tùy chọn)
+            # rm .env.prod 
             docker image prune -f
-            echo "Deployment completed."
+
+            echo "✅ Deployment Successful!"
