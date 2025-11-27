@@ -58,17 +58,27 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image
+      - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
-          IMAGE_TAG: ${{ github.sha }} # <--- Dùng SHA làm tag
+          # Lấy giá trị thô từ secret
+          RAW_ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build với tag là SHA
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          # 1. XỬ LÝ BIẾN (Làm sạch chuỗi URI)
+          # Xóa 'https://' nếu có
+          CLEAN_REPO_URI=$(echo "$RAW_ECR_REPOSITORY" | sed 's|https://||g')
+          # Chuyển tất cả thành chữ thường (Lowercase)
+          CLEAN_REPO_URI=$(echo "$CLEAN_REPO_URI" | tr '[:upper:]' '[:lower:]')
 
-          # Push image có tag SHA lên ECR
-          docker push $ECR_REPOSITORY:$IMAGE_TAG
+          echo "Original URI: $RAW_ECR_REPOSITORY"
+          echo "Cleaned URI: $CLEAN_REPO_URI"
+
+          # 2. BUILD
+          docker build -t $CLEAN_REPO_URI:$IMAGE_TAG .
+
+          # 3. PUSH
+          docker push $CLEAN_REPO_URI:$IMAGE_TAG
 
   # JOB 3: DEPLOY (Pull đúng github.sha)
   deploy-to-ec2:
