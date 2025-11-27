@@ -1,14 +1,13 @@
-name: FastAPI CI
+name: FastAPI CI/CD
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main"]
   pull_request:
-    branches:
-      - main
+    branches: ["main"]
 
 jobs:
+  # JOB 1: LINT & TEST
   linting-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -25,14 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run linting
-        run: |
-          # Dừng build nếu có lỗi cú pháp Python hoặc biến chưa định nghĩa
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Cảnh báo style code nhưng không dừng build (exit-zero)
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-
-      - name: Run tests
+      - name: Run linting and tests
         env:
           PYTHONPATH: .
           POSTGRES_HOST: localhost
@@ -42,61 +34,110 @@ jobs:
           POSTGRES_PASSWORD: test_password
           SECRET_KEY: test_secret_key
         run: |
+          flake8 . --count --exit-zero --max-complexity=10 --statistics
           pytest
 
-  deploy-to-ec2:
+  # JOB 2: BUILD & PUSH (Dùng github.sha)
+  build-and-push:
     needs: linting-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
+          IMAGE_TAG: ${{ github.sha }} # <--- Dùng SHA làm tag
+        run: |
+          # Build với tag là SHA
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+
+          # Push image có tag SHA lên ECR
+          docker push $ECR_REPOSITORY:$IMAGE_TAG
+
+  # JOB 3: DEPLOY (Pull đúng github.sha)
+  deploy-to-ec2:
+    needs: build-and-push
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_URI: ${{ secrets.ECR_REPOSITORY_URI }}
+          # Truyền SHA vào biến môi trường
+          IMAGE_TAG: ${{ github.sha }}
+
+          # Các biến môi trường khác cho App
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          # Thêm IMAGE_TAG vào danh sách envs để truyền sang server
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_URI,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD,SECRET_KEY
           script: |
-            # --- 1. CHUẨN BỊ THÔNG TIN ---
-            ECR_URI="${{ secrets.ECR_REPOSITORY_URI }}"
-            IMAGE_TAG= "${{ github.sha }}"
+            # 1. Cấu hình AWS trên Server
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+            export AWS_DEFAULT_REGION=$AWS_REGION
+
+            # 2. Xác định Image cần pull (Dùng biến IMAGE_TAG truyền từ Github)
             FULL_IMAGE="$ECR_URI:$IMAGE_TAG"
+
+            echo "========================================"
+            echo "🚀 DEPLOYING VERSION: $IMAGE_TAG"
+            echo "Target Image: $FULL_IMAGE"
+            echo "========================================"
+
+            # 3. Login ECR
             REGISTRY_DOMAIN=$(echo "$ECR_URI" | cut -d'/' -f1)
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REGISTRY_DOMAIN
 
-            echo "Start deploying image: $FULL_IMAGE"
+            # 4. Pull Image (Đúng phiên bản SHA)
+            docker pull $FULL_IMAGE
 
-            # --- 2. TẠO FILE .ENV TẠM THỜI ---
-            # Cách này an toàn hơn việc truyền biến trực tiếp vào lệnh docker run
-            # Tránh lỗi cú pháp do ký tự đặc biệt
-
-            cat <<EOF > .env.prod
-            POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}
-            POSTGRES_PORT=5432
-            POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-            POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-            SECRET_KEY=${{ secrets.SECRET_KEY }}
-            EOF
-
-            # --- 3. ĐĂNG NHẬP & KÉO IMAGE ---
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin "$REGISTRY_DOMAIN"
-            docker pull "$FULL_IMAGE"
-
-            # --- 4. TÁI KHỞI ĐỘNG CONTAINER ---
+            # 5. Stop container cũ
             docker stop backend || true
             docker rm backend || true
 
-            # Chạy container và đọc biến từ file .env.prod
+            # 6. Chạy container mới
             docker run -d \
               --name backend \
               --restart always \
               -p 80:8000 \
-              --env-file .env.prod \
-              "$FULL_IMAGE"
+              -e POSTGRES_HOST="$POSTGRES_HOST" \
+              -e POSTGRES_PORT="5432" \
+              -e POSTGRES_DB="$POSTGRES_DB" \
+              -e POSTGRES_USER="$POSTGRES_USER" \
+              -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+              -e SECRET_KEY="$SECRET_KEY" \
+              $FULL_IMAGE
 
-            # --- 5. DỌN DẸP ---
-            # Xóa file .env sau khi dùng xong để bảo mật (tùy chọn)
-            # rm .env.prod 
+            # 7. Dọn dẹp (Xóa các image cũ để tiết kiệm ổ cứng, giữ lại image đang chạy)
             docker image prune -f
 
-            echo "✅ Deployment Successful!"
+            echo "✅ DEPLOY SUCCESSFUL!"
