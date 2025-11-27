@@ -66,7 +66,6 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           # 1. XỬ LÝ BIẾN (Làm sạch chuỗi URI)
-          # Xóa 'https://' nếu có
           CLEAN_REPO_URI=$(echo "$RAW_ECR_REPOSITORY" | sed 's|https://||g')
           # Chuyển tất cả thành chữ thường (Lowercase)
           CLEAN_REPO_URI=$(echo "$CLEAN_REPO_URI" | tr '[:upper:]' '[:lower:]')
