@@ -49,4 +49,4 @@ def test_read_main():
     response = client.get("/")
     assert response.status_code == 200
     # Đảm bảo nội dung này khớp với main.py
-    assert response.json() == {"message": "Welcome to the Student Management API! Visit /docs for API documentation."}
+    assert response.json() == {"message": "Welcome to the Student Management API! Visit /docs for API documentation.My name is La Minh Duc"}
