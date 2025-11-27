@@ -51,40 +51,38 @@ jobs:
 
     steps:
       - name: Deploy EC2 via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          SSH_HOST: ${{ secrets.EC2_HOST }}
-          SSH_USERNAME: ${{ secrets.EC2_USER }}
-          IMAGE_TAG: ${{ github.sha }}
-          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+  uses: appleboy/ssh-action@v1.0.3
+  env:
+    SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+    SSH_HOST: ${{ secrets.EC2_HOST }}
+    SSH_USERNAME: ${{ secrets.EC2_USER }}
 
-          ECR_REGISTRY: ${{ secrets.AWS_ACCESS_KEY_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
-        with:
-          host: SSH_HOST
-          username: SSH_USER
-          key: SSH_PRIVATE_KEY
-          envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD
-          script: |
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
+    IMAGE_TAG: ${{ github.sha }}
+    POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+    POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+    POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+    POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
 
-            docker pull $ECR_REPOSITORY:$IMAGE_TAG || true
+    ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+    ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
 
-            docker stop backend || true
-            docker rm backend || true
-
-            docker run -d \
-              --name backend \
-              -p 80:8000 \
-              -e POSTGRES_HOST=$POSTGRES_HOST \
-              -e POSTGRES_PORT=5432 \
-              -e POSTGRES_DB=$POSTGRES_DB \
-              -e POSTGRES_USER=$POSTGRES_USER \
-              -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-              $ECR_REPOSITORY:$IMAGE_TAG
-
-            docker image prune -f
+  with:
+    host: ${{ env.SSH_HOST }}
+    username: ${{ env.SSH_USERNAME }}
+    key: ${{ env.SSH_PRIVATE_KEY }}
+    envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD
+    script: |
+      aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
+      docker pull $ECR_REPOSITORY:$IMAGE_TAG || true
+      docker stop backend || true
+      docker rm backend || true
+      docker run -d \
+        --name backend \
+        -p 80:8000 \
+        -e POSTGRES_HOST=$POSTGRES_HOST \
+        -e POSTGRES_PORT=5432 \
+        -e POSTGRES_DB=$POSTGRES_DB \
+        -e POSTGRES_USER=$POSTGRES_USER \
+        -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+        $ECR_REPOSITORY:$IMAGE_TAG
+      docker image prune -f
