@@ -53,6 +53,10 @@ jobs:
       - name: Deploy EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
           SSH_HOST: ${{ secrets.EC2_HOST }}
           SSH_USERNAME: ${{ secrets.EC2_USER }}
@@ -63,26 +67,42 @@ jobs:
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
 
-          ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ECR_REGISTRY: ${{ secrets.AWS_ACCESS_KEY_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
 
         with:
           host: ${{ env.SSH_HOST }}
           username: ${{ env.SSH_USERNAME }}
           key: ${{ env.SSH_PRIVATE_KEY }}
-          envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD
+          envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD, AWS_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY
           script: |
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
-            docker pull $ECR_REPOSITORY:$IMAGE_TAG || true
+            export AWS_ACCESS_KEY_ID=${{ env.AWS_ACCESS_KEY_ID }}
+            export AWS_SECRET_ACCESS_KEY=${{ env.AWS_SECRET_ACCESS_KEY }}
+            export AWS_DEFAULT_REGION=${{ env.AWS_REGION }}
+
+            REGISTRY_DOMAIN=$(echo $ECR_REPOSITORY_URI | cut -d'/' -f1)
+
+            echo "Logging into ECR: $REGISTRY_DOMAIN"
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $REGISTRY_DOMAIN
+
+            echo "Pulling image: $ECR_REPOSITORY_URI:$IMAGE_TAG"
+            docker pull $ECR_REPOSITORY_URI:$IMAGE_TAG
+
+            echo "Stopping old container..."
             docker stop backend || true
             docker rm backend || true
+
+            echo "Starting new container..."
             docker run -d \
               --name backend \
+              --restart always \
               -p 80:8000 \
               -e POSTGRES_HOST=$POSTGRES_HOST \
-              -e POSTGRES_PORT=5432 \
+              -e POSTGRES_PORT=$POSTGRES_PORT \
               -e POSTGRES_DB=$POSTGRES_DB \
               -e POSTGRES_USER=$POSTGRES_USER \
               -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-              $ECR_REPOSITORY:$IMAGE_TAG
+              -e SECRET_KEY=$SECRET_KEY \
+              $ECR_REPOSITORY_URI:$IMAGE_TAG
             docker image prune -f
+            echo "Deployment completed."
