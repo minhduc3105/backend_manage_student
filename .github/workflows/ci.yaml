@@ -50,28 +50,41 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Deploy EC2 via SSH
+        uses: appleboy/ssh-actions@v1.0.3
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          SSH_HOST: ${{ secrets.EC2_HOST }}
+          SSH_USERNAME: ${{ secrets.EC2_USER }}
           IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # Build image
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
 
-          # Push image lên ECR
-          docker push $ECR_REPOSITORY:$IMAGE_TAG
+          ECR_REGISTRY: ${{ secrets.AWS_ACCESS_KEY_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_URI }}
+        with:
+          host: SSH_HOST
+          username: SSH_USER
+          key: SSH_PRIVATE_KEY
+          envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG,POSTGRES_HOST,POSTGRES_DB,POSTGRES_USER,POSTGRES_PASSWORD
+          script: |
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            docker pull $ECR_REPOSITORY:$IMAGE_TAG || true
+
+            docker stop backend || true
+            docker rm backend || true
+
+            docker run -d \
+              --name backend \
+              -p 80:8000 \
+              -e POSTGRES_HOST=$POSTGRES_HOST \
+              -e POSTGRES_PORT=5432 \
+              -e POSTGRES_DB=$POSTGRES_DB \
+              -e POSTGRES_USER=$POSTGRES_USER \
+              -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+              $ECR_REPOSITORY:$IMAGE_TAG
+
+            docker image prune -f
