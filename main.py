@@ -11,6 +11,7 @@ from app.services import tuition_service
 import os
 from starlette.middleware.sessions import SessionMiddleware
 import logging
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # Cấu hình logging cho APScheduler
 logging.basicConfig()
