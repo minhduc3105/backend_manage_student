@@ -65,9 +65,15 @@ app = FastAPI(
 
 
 # Cấu hình CORS để cho phép các domain khác truy cập API
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "https://api.dbdb-team.site"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
