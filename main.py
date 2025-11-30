@@ -64,7 +64,10 @@ app = FastAPI(
 )
 
 
-# Cấu hình CORS để cho phép các domain khác truy cập API
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts=["*"]
+)
 # Cấu hình CORS
 origins = [
     "http://localhost",
@@ -82,6 +85,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ⚠️ Cần thêm middleware này cho OAuth Google
 app.add_middleware(
