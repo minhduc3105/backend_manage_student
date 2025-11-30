@@ -13,11 +13,10 @@ from starlette.requests import Request
 from dotenv import load_dotenv
 
 from app.api.deps import get_db
-from app.models.user_model import User
 from app.models.token_model import RefreshToken
 from app.schemas.auth_schema import LoginRequest
 
-# ✅ Chỉ import UserMeResponse cho /me (Login giữ nguyên logic cũ nên không cần import LoginResponse từ schema)
+# ✅ Chỉ import UserMeResponse cho /me
 from app.schemas.user_schema import UserMeResponse 
 
 from app.api.auth.auth import (
@@ -44,8 +43,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 
-# ---------------------- LOCAL SCHEMA (GIỮ NGUYÊN NHƯ CŨ) ---------------------- #
-# Bạn muốn giữ login cũ nên tôi để class này ở đây như code gốc
+# ---------------------- LOCAL SCHEMA ---------------------- #
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
@@ -59,9 +57,11 @@ class LoginResponse(BaseModel):
     gender: Optional[str] = None
 
 
-# ---------------------- LOGIN TRUYỀN THỐNG (GIỮ NGUYÊN) ---------------------- #
+# ---------------------- LOGIN TRUYỀN THỐNG ---------------------- #
 @router.post("/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
+    from app.models.user_model import User
+    
     username = data.username
     password = data.password
     user = db.query(User).filter(User.username == username).first()
@@ -76,7 +76,6 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     
     logger.info(f"Login successful, refresh token: {refresh_token_str}")
 
-    # Logic cũ của bạn
     user_roles_list = getattr(user, "roles", [])
     roles = [role.name for role in user_roles_list]
 
@@ -94,7 +93,6 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     )
 
     json_response = JSONResponse(content=login_data.model_dump())
-
     json_response.set_cookie(
         key="refresh_token",
         value=refresh_token_str,
@@ -104,12 +102,10 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         domain=None, 
         max_age=60 * 60 * 24 * REFRESH_TOKEN_EXPRIRE_DAYS
     )
-
-    logger.info("--- DEBUG: ĐÃ TẠO RESPONSE, SẮP GỬI VỀ ---")
     return json_response
 
 
-# ---------------------- GOOGLE SSO (GIỮ NGUYÊN) ---------------------- #
+# ---------------------- GOOGLE SSO (ĐÃ SỬA: INSERT user_roles TRỰC TIẾP) ---------------------- #
 @router.get("/google")
 def login_with_google():
     google_auth_url = (
@@ -124,97 +120,142 @@ def login_with_google():
 
 @router.get("/google/callback")
 def google_callback(code: str, db: Session = Depends(get_db)):
+    # ✅ Import Local các Models cần thiết
+    from app.models.user_model import User
+    from app.models.student_model import Student
+    
+    # ✅ Import bảng trung gian user_roles
+    from app.models.association_tables import user_roles 
+    
     try:
-        # 1, 2, 3: (Giữ nguyên logic lấy Google Token và User như cũ)
+        # 1. Lấy Token & User Info
         token_data = sso_service.exchange_code_for_token(code)
         access_token = token_data.get("access_token")
         user_info = sso_service.get_user_info(access_token)
         
+        # 2. Check/Create User
         user = db.query(User).filter(User.email == user_info.email).first()
         if not user:
-            # ... (logic tạo user mới giữ nguyên) ...
+            user = User(
+                username=user_info.email.split("@")[0],
+                email=user_info.email,
+                full_name=user_info.full_name,
+                password="", 
+                gender="male", 
+                phone_number="", 
+                date_of_birth=datetime(2000, 1, 1).date()
+            )
             db.add(user)
             db.commit()
             db.refresh(user)
 
-        # 4. Tạo JWT Access Token
+        # 🔥🔥 2.1 LOGIC MỚI: INSERT TRỰC TIẾP VÀO BẢNG user_roles 🔥🔥
+        # Role ID 3 = Student (theo yêu cầu của bạn)
+        STUDENT_ROLE_ID = 3
+        
+        # Kiểm tra xem user này đã có role_id = 3 trong bảng user_roles chưa
+        # Query trực tiếp vào bảng trung gian
+        existing_role = db.query(user_roles).filter(
+            user_roles.c.user_id == user.user_id,
+            user_roles.c.role_id == STUDENT_ROLE_ID
+        ).first()
+
+        if not existing_role:
+            logger.info(f"User {user.username} chưa có role_id={STUDENT_ROLE_ID}. Đang insert vào user_roles...")
+            
+            # Sử dụng câu lệnh INSERT của SQLAlchemy Core
+            stmt = user_roles.insert().values(
+                user_id=user.user_id,
+                role_id=STUDENT_ROLE_ID
+            )
+            db.execute(stmt)
+            db.commit()
+            logger.info(f"✅ Đã insert (user_id={user.user_id}, role_id={STUDENT_ROLE_ID}) vào bảng user_roles")
+        
+        # 🔥🔥 3. LOGIC CŨ: Tự động thêm vào bảng STUDENTS 🔥🔥
+        student_record = db.query(Student).filter(Student.user_id == user.user_id).first()
+        
+        if not student_record:
+            logger.info(f"User {user.user_id} chưa có trong bảng Student. Đang tạo mới...")
+            new_student = Student(
+                user_id=user.user_id,
+                parent_id=None 
+            )
+            db.add(new_student)
+            db.commit()
+            db.refresh(new_student)
+            logger.info(f"✅ Đã tạo Student record cho User ID {user.user_id}")
+
+        # 4. Tạo JWT & Refresh Token
         jwt_token = create_access_token(
             data={"sub": str(user.user_id)},
             expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         )
-
-        # 🔥 5. TẠO REFRESH TOKEN (Thêm đoạn này)
         refresh_token_str = create_refresh_token(user.user_id, db)
 
-        # 6. Chuẩn bị Redirect Response
+        # 5. Redirect
         frontend_url = f"{FRONTEND_URL}/login/callback?token={jwt_token}"
         response = RedirectResponse(url=frontend_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
-        # 🔥 7. GẮN COOKIE VÀO RESPONSE (Quan trọng)
-        # Trình duyệt sẽ tự động lưu cookie này khi nhận được redirect
         response.set_cookie(
             key="refresh_token",
             value=refresh_token_str,
-            httponly=True,          # Frontend JS không đọc được (Bảo mật)
-            secure=True,            # Chỉ chạy trên HTTPS (hoặc localhost)
-            samesite="none",        # Để cookie hoạt động cross-site nếu cần
-            max_age=60 * 60 * 24 * 7 # 7 ngày
+            httponly=True,
+            secure=True,
+            samesite="none",
+            max_age=60 * 60 * 24 * REFRESH_TOKEN_EXPRIRE_DAYS
         )
 
         return response
 
     except Exception as e:
-        print(f"❌ Google login error: {e}")
+        logger.error(f"❌ Google login error: {e}")
         return RedirectResponse(
             url=f"{FRONTEND_URL}/login?error=google_login_failed",
             status_code=status.HTTP_307_TEMPORARY_REDIRECT
         )
 
 
-# ---------------------- LẤY USER TỪ TOKEN (ĐÃ SỬA) ---------------------- #
-@router.get("/me", response_model=UserMeResponse) # ✅ Sử dụng Schema mới
+# ---------------------- LẤY USER TỪ TOKEN (/me) ---------------------- #
+@router.get("/me", response_model=UserMeResponse)
 def get_current_user(request: Request, db: Session = Depends(get_db)):
-    # 1. Lấy Token từ Header
+    from app.models.user_model import User
+    
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Thiếu hoặc sai định dạng token")
 
     token = auth_header.split(" ")[1]
-    
-    # 2. Verify Token & Lấy User
     token_data = verify_token(token)
     
-    # ✅ Fetch user từ DB (Dùng biến 'user' thường)
     user = db.query(User).filter(User.user_id == token_data.user_id).first()
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 3. Mapping dữ liệu (QUAN TRỌNG: Dùng 'user' thường, không dùng 'User' hoa)
     roles_list = [role.name for role in getattr(user, "roles", [])]
     dob_formatted = user.date_of_birth.strftime("%d/%m/%Y") if user.date_of_birth else None
 
-    # 4. Trả về đúng Schema UserMeResponse để khớp với Frontend
     return UserMeResponse(
         user_id=user.user_id,
         username=user.username,
         email=user.email,
         full_name=user.full_name,
         gender=user.gender,
-        
-        # Mapping Key:
-        roles=roles_list,         # key 'roles'
-        phone=user.phone_number,  # DB 'phone_number' -> Schema 'phone'
-        dob=dob_formatted         # DB 'date_of_birth' -> Schema 'dob'
+        roles=roles_list, 
+        phone=user.phone_number, 
+        dob=dob_formatted 
     )
 
 
-# ---------------------- REFRESH TOKEN (GIỮ NGUYÊN) ---------------------- #
+# ---------------------- REFRESH TOKEN ---------------------- #
 @router.post("/refresh")
 def refresh_token(
     refresh_token: Optional[str] = Cookie(None),
     db: Session = Depends(get_db)
 ):
+    from app.models.user_model import User
+
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Missing refresh token cookie")
 
@@ -239,7 +280,7 @@ def refresh_token(
     return {"access_token": new_access_token, "token_type": "bearer"}
 
 
-# ---------------------- LOGOUT (GIỮ NGUYÊN) ---------------------- #
+# ---------------------- LOGOUT ---------------------- #
 @router.post("/logout")
 def logout(
     refresh_token: Optional[str] = Cookie(None),

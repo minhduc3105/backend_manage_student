@@ -41,7 +41,7 @@ def create_new_teacher_review(
         raise HTTPException(status_code=404, detail="Teacher not found")
 
     # Kiểm tra student có tồn tại không
-    db_student = student_crud.get_student(db, user_id=current_user.user_id)
+    db_student = student_crud.get_student(db, student_user_id=current_user.user_id)
     if not db_student:
         raise HTTPException(status_code=404, detail="Student not found")
 
@@ -142,7 +142,7 @@ def get_reviews_by_student(
     
     Quyền truy cập: **all authenticated users**
     """
-    db_student = student_crud.get_student(db, user_id=user_id)
+    db_student = student_crud.get_student(db, student_user_id=user_id)
     if not db_student:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

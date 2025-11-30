@@ -243,7 +243,7 @@ def get_student_teachers_endpoint(
     Quyền truy cập: **manager, teacher** (toàn bộ), **student** (của mình), **parent** (của con).
     """
     # 1. Kiểm tra học sinh tồn tại (Hàm authorize_student_view không kiểm tra sự tồn tại)
-    db_student = student_crud.get_student(db, user_id=student_user_id)
+    db_student = student_crud.get_student(db, student_user_id)
     if not db_student:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Học sinh không tìm thấy.")
 

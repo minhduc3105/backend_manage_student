@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from app.models.teacher_review_model import TeacherReview
 from app.schemas.teacher_review_schema import TeacherReviewCreate, TeacherReviewUpdate, TeacherReviewView
-from datetime import datetime
+from datetime import datetime, timezone # ✅ Thêm timezone
 import logging
 from typing import List
 from app.models.user_model import User
@@ -25,7 +25,10 @@ def get_teacher_review_with_names_query(db: Session):
             teacher_user.c.full_name.label("teacher_name"),
             student_user.c.full_name.label("student_name"),
             TeacherReview.rating,
-            TeacherReview.review_date,
+            
+            # ✅ Thêm label rõ ràng để Pydantic nhận diện chính xác
+            TeacherReview.review_date.label("review_date"),
+            
             TeacherReview.review_content
         )
         .select_from(
@@ -71,7 +74,6 @@ def get_teacher_reviews_by_student_user_id(db: Session, student_user_id: int, sk
     results = db.execute(query).all()
     return [TeacherReviewView.model_validate(row) for row in results]
 
-# This function is already correct based on your previous code
 def get_all_teacher_reviews(db: Session, skip: int = 0, limit: int = 100) -> List[TeacherReviewView]:
     """
     Query all teacher reviews, getting teacher and student names by JOINing with the users table.
@@ -97,13 +99,17 @@ def create_teacher_review(
             detail="Bạn đã đánh giá giáo viên này rồi."
         )
 
+    # ✅ SỬA LỖI Ở ĐÂY: Dùng datetime.now(timezone.utc)
+    # Điều này đảm bảo ngày tháng có múi giờ chuẩn (UTC), 
+    # giúp Frontend hiển thị đúng mà không bị "Invalid Date".
     db_teacher_review = TeacherReview(
         teacher_user_id=teacher_review.teacher_user_id,
         student_user_id=student_user_id,
         rating=teacher_review.rating,
         review_content=teacher_review.review_content,
-        review_date=datetime.now()
+        review_date=datetime.now(timezone.utc) 
     )
+    
     db.add(db_teacher_review)
     db.commit()
     db.refresh(db_teacher_review)
