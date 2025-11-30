@@ -137,7 +137,7 @@ jobs:
             docker run -d \
               --name backend \
               --restart always \
-              -p 80:8000 \
+              -p 8000:8000 \
               -e POSTGRES_HOST="$POSTGRES_HOST" \
               -e POSTGRES_PORT="5432" \
               -e POSTGRES_DB="$POSTGRES_DB" \
