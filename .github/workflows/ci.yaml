@@ -148,6 +148,7 @@ jobs:
               -e GOOGLE_REDIRECT_URI="${{ secrets.GOOGLE_REDIRECT_URI }}" \
               -e SESSION_SECRET_KEY="${{ secrets.SESSION_SECRET_KEY }}" \
               -e SECRET_KEY="$SECRET_KEY" \
+              -e FRONTEND_URL="${{ secrets.FRONTEND_URL }}" \
               $FULL_IMAGE
 
             # 7. Dọn dẹp (Xóa các image cũ để tiết kiệm ổ cứng, giữ lại image đang chạy)
